@@ -133,7 +133,7 @@ Registrar Anomalia
 <div class="card">
 <h3>Tecidos (histórico)</h3>
 <div class="actions">
-<button type="button" id="btnAtualizarDados" class="ghost">Atualizar Dados da Planilha</button>
+<button type="button" id="btnAtualizarDados" class="ghost">Atualizar Dados</button>
 </div>
 <table id="tbFabrics"><thead><tr><th>Código</th><th>Filtro</th><th>Placa</th><th>Lado</th><th>Instalado</th><th>Instalador</th><th>Anomalias</th><th>Status</th><th>Removido</th><th>Ações</th></tr></thead><tbody></tbody></table>
 </div>
@@ -144,13 +144,10 @@ Registrar Anomalia
 </div>
 <script>
 // CONFIGURAÇÃO - SUBSTITUA PELA SUA URL DO APPS SCRIPT
-const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbz6YXfYtfEqM1j6yUjlkTZGDrA2H7dTi18YAT6ezwAvLGKOydSl3bMEMYCZwuV-qPG_/exec';
-const SPREADSHEET_ID = '1-Dc09wA3vd_sDRxoGsPrOuUKvXaCMee_dtRpRoft-go';
+const WEB_APP_URL = 'https://script.google.com/macros/s/AKfycbxEeJ5RJPILbAp5yn_qRRjU77EF9YrGMuVYbJnIYwhmXwVfGEQVkBCUBYKf6Yb7Fg6j/exec';
 
-// STORAGE KEYS (apenas para cache)
-const KEY_FABRICS_CACHE = 'tecidos_cache';
-const KEY_LAST_SYNC = 'last_sync';
-
+// STORAGE KEYS
+const KEY_FABRICS = 'tecidos_v3';
 const placasPorFiltro = { '1': 31, '2': 111, '3': 111, '4': 111 };
 
 // DOM
@@ -189,8 +186,8 @@ const btnAtualizarDados = document.getElementById('btnAtualizarDados');
 const statusMessage = document.getElementById('statusMessage');
 
 // FUNÇÕES UTILITÁRIAS
-const readCache = (k) => JSON.parse(localStorage.getItem(k) || '[]');
-const writeCache = (k, v) => localStorage.setItem(k, JSON.stringify(v));
+const read = (k) => JSON.parse(localStorage.getItem(k) || '[]');
+const write = (k, v) => localStorage.setItem(k, JSON.stringify(v));
 
 function showStatus(message, type = 'info') {
     statusMessage.textContent = message;
@@ -217,46 +214,42 @@ function esc(s) {
     return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); 
 }
 
-// FUNÇÕES GOOGLE SHEETS - LEITURA DIRETA (sem Apps Script)
-async function fetchSheetData(sheetName) {
-    try {
-        // URL para buscar dados da planilha como CSV
-        const url = `https://docs.google.com/spreadsheets/d/${SPREADSHEET_ID}/gviz/tq?tqx=out:csv&sheet=${sheetName}`;
-        
-        const response = await fetch(url);
-        const csvText = await response.text();
-        
-        if (!csvText.trim()) {
-            return [];
-        }
-        
-        // Converter CSV para JSON
-        const lines = csvText.split('\n');
-        const headers = lines[0].split(',').map(h => h.replace(/"/g, '').trim());
-        
-        const data = [];
-        for (let i = 1; i < lines.length; i++) {
-            if (!lines[i].trim()) continue;
-            
-            const values = lines[i].split(',').map(v => v.replace(/^"|"$/g, '').trim());
-            const obj = {};
-            
-            headers.forEach((header, index) => {
-                obj[header] = values[index] || '';
-            });
-            
-            data.push(obj);
-        }
-        
-        return data;
-    } catch (error) {
-        console.error(`Erro ao buscar dados da planilha ${sheetName}:`, error);
-        showStatus(`Erro ao carregar dados: ${error.message}`, 'error');
-        return [];
-    }
+function toCSV(arr) {
+    if (!arr.length) return '';
+    const keys = Object.keys(arr[0]);
+    const lines = [keys.join(';')];
+    arr.forEach(o => {
+        const row = keys.map(k => '"' + String((o[k] === undefined || o[k] === null) ? '' : o[k]).replace(/"/g, '""') + '"').join(';');
+        lines.push(row);
+    });
+    return lines.join('\n');
 }
 
-// FUNÇÕES GOOGLE SHEETS - ESCRITA (com Apps Script)
+function download(content, filename) { 
+    let blob = new Blob([content], { type: 'text/csv;charset=utf-8;' }); 
+    let url = URL.createObjectURL(blob); 
+    let a = document.createElement('a'); 
+    a.href = url; 
+    a.download = filename; 
+    a.click(); 
+    URL.revokeObjectURL(url); 
+}
+
+function traduzirStatus(status) {
+    const statusMap = {
+        'em_operacao': 'Em Operação',
+        'substituido': 'Substituído'
+    };
+    return statusMap[status] || status;
+}
+
+function getBadgeClass(totalAnomalias) {
+    if (totalAnomalias === 0) return 'badge-success';
+    if (totalAnomalias <= 2) return 'badge-warning';
+    return 'badge-danger';
+}
+
+// FUNÇÕES GOOGLE SHEETS
 async function saveToGoogleSheets(sheetName, rowData) {
     try {
         const response = await fetch(WEB_APP_URL, {
@@ -280,62 +273,8 @@ async function saveToGoogleSheets(sheetName, rowData) {
 }
 
 // FUNÇÕES DE DADOS
-async function carregarDadosDaPlanilha() {
-    showStatus('Carregando dados do Google Sheets...', 'info');
-    
-    try {
-        // Buscar dados diretamente da planilha
-        const [tecidosData, anomaliasData] = await Promise.all([
-            fetchSheetData('Tecidos'),
-            fetchSheetData('Anomalias')
-        ]);
-        
-        console.log('Tecidos carregados:', tecidosData);
-        console.log('Anomalias carregadas:', anomaliasData);
-        
-        // Processar dados dos tecidos
-        const tecidosProcessados = tecidosData.map(tecido => {
-            // Encontrar anomalias para este tecido
-            const anomaliasTecido = anomaliasData.filter(anomalia => 
-                anomalia.Codigo_Tecido === tecido.Codigo
-            );
-            
-            return {
-                codigo: tecido.Codigo || '',
-                filtro: parseInt(tecido.Filtro) || 0,
-                placa: parseInt(tecido.Placa) || 0,
-                lado: tecido.Lado || '',
-                instalado_em: tecido.Instalado_em || '',
-                instalador: tecido.Instalador || '',
-                obs_instalacao: tecido.Obs_Instalacao || '',
-                status: tecido.Status || 'em_operacao',
-                removido_em: tecido.Removido_em || null,
-                anomalias: anomaliasTecido.map(a => ({
-                    data: a.Data || '',
-                    quadrante: a.Quadrante || '',
-                    condicao: a.Condicao || '',
-                    responsavel: a.Responsavel || '',
-                    observacoes: a.Observacoes || ''
-                }))
-            };
-        });
-        
-        // Salvar no cache local
-        writeCache(KEY_FABRICS_CACHE, tecidosProcessados);
-        writeCache(KEY_LAST_SYNC, new Date().toISOString());
-        
-        showStatus(`Dados carregados: ${tecidosProcessados.length} tecidos, ${anomaliasData.length} anomalias`, 'success');
-        return tecidosProcessados;
-        
-    } catch (error) {
-        console.error('Erro ao carregar dados da planilha:', error);
-        showStatus(`Erro ao carregar dados: ${error.message}`, 'error');
-        return readCache(KEY_FABRICS_CACHE); // Retornar dados do cache em caso de erro
-    }
-}
-
 function gerarCodigo() {
-    let fabrics = readCache(KEY_FABRICS_CACHE);
+    let fabrics = read(KEY_FABRICS);
     let max = 0;
     fabrics.forEach(f => {
         let m = (f.codigo || '').match(/^T0*([0-9]+)$/);
@@ -366,7 +305,7 @@ function atualizarTecidosPorFiltro() {
     const filtro = filtroBusca.value;
     const placa = placaBusca.value;
     
-    let fabrics = readCache(KEY_FABRICS_CACHE).filter(f => f.status === 'em_operacao');
+    let fabrics = read(KEY_FABRICS).filter(f => f.status === 'em_operacao');
     
     if (filtro) {
         fabrics = fabrics.filter(f => String(f.filtro) === filtro);
@@ -385,30 +324,15 @@ function atualizarTecidosPorFiltro() {
         insp_codigo.appendChild(opt);
     });
     
+    // Se só há um resultado, selecione automaticamente
     if (fabrics.length === 1) {
         insp_codigo.value = fabrics[0].codigo;
         insp_codigo.dispatchEvent(new Event('change'));
     }
 }
 
-function traduzirStatus(status) {
-    const statusMap = {
-        'em_operacao': 'Em Operação',
-        'substituido': 'Substituído'
-    };
-    return statusMap[status] || status;
-}
-
-function getBadgeClass(totalAnomalias) {
-    if (totalAnomalias === 0) return 'badge-success';
-    if (totalAnomalias <= 2) return 'badge-warning';
-    return 'badge-danger';
-}
-
 function carregarTabelas() {
-    let fabrics = readCache(KEY_FABRICS_CACHE).slice().sort((a, b) => new Date(b.instalado_em) - new Date(a.instalado_em));
-    
-    // Tabela de tecidos
+    let fabrics = read(KEY_FABRICS).slice().sort((a, b) => new Date(b.instalado_em) - new Date(a.instalado_em));
     tbFabrics.innerHTML = '';
     fabrics.forEach(f => { 
         const totalAnom = f.anomalias ? f.anomalias.length : 0;
@@ -433,7 +357,7 @@ function carregarTabelas() {
         tbFabrics.appendChild(tr); 
     });
 
-    // Tabela de resumo de anomalias
+    // Tabela de resumo de anomalias por tecido
     tbInsps.innerHTML = '';
     fabrics.forEach(f => {
         if (f.anomalias && f.anomalias.length > 0) {
@@ -441,6 +365,7 @@ function carregarTabelas() {
             const primeiraAnom = f.anomalias[0];
             const ultimaAnom = f.anomalias[f.anomalias.length - 1];
             
+            // Contar tipos de anomalias
             const tiposAnomalias = {};
             f.anomalias.forEach(a => {
                 tiposAnomalias[a.condicao] = (tiposAnomalias[a.condicao] || 0) + 1;
@@ -464,7 +389,7 @@ function carregarTabelas() {
 }
 
 function preencherSelectTecidos() {
-    let fabrics = readCache(KEY_FABRICS_CACHE).filter(f => f.status === 'em_operacao');
+    let fabrics = read(KEY_FABRICS).filter(f => f.status === 'em_operacao');
     insp_codigo.innerHTML = '<option value="">-- escolher tecido ativo --</option>';
     fabrics.forEach(f => {
         let opt = document.createElement('option'); 
@@ -475,8 +400,9 @@ function preencherSelectTecidos() {
     });
 }
 
+// FUNÇÃO PARA VER DETALHES DAS ANOMALIAS
 function verDetalhesAnomalias(codigo) {
-    let fabrics = readCache(KEY_FABRICS_CACHE);
+    let fabrics = read(KEY_FABRICS);
     let f = fabrics.find(x => x.codigo === codigo);
     
     if (!f || !f.anomalias || f.anomalias.length === 0) {
@@ -523,10 +449,54 @@ formInstal.addEventListener('submit', async e => {
     
     if (!codigo) return alert('Informe ou gere o código do tecido.');
     
+    // Mostrar loading
     loadingInstalacao.style.display = 'inline-block';
     btnSalvarInstalacao.disabled = true;
     
     try {
+        let fabrics = read(KEY_FABRICS);
+        
+        // Verificar se há tecido ativo na mesma posição
+        const tecidoAtivo = fabrics.find(f => 
+            f.filtro == filtro && 
+            String(f.placa) === String(placa) && 
+            f.lado === lado && 
+            f.status === 'em_operacao'
+        );
+
+        if (tecidoAtivo && !confirm(`Já existe o tecido ${tecidoAtivo.codigo} ativo nesta posição. Deseja substituí-lo?`)) {
+            return;
+        }
+
+        // Marcar tecido anterior como substituído
+        if (tecidoAtivo) {
+            const tecidoAtualizado = {
+                ...tecidoAtivo,
+                status: 'substituido',
+                removido_em: new Date().toISOString()
+            };
+            
+            // Atualizar no cache local
+            fabrics = fabrics.map(f => 
+                f.codigo === tecidoAtivo.codigo ? tecidoAtualizado : f
+            );
+            write(KEY_FABRICS, fabrics);
+        }
+
+        // Criar novo tecido
+        const novoTecido = {
+            codigo,
+            filtro: Number(filtro),
+            placa: Number(placa),
+            lado,
+            instalado_em: new Date(data + 'T00:00:00').toISOString(),
+            instalador,
+            obs_instalacao: obs,
+            status: 'em_operacao',
+            removido_em: null,
+            anomalias: []
+        };
+
         // Preparar dados para o Google Sheets
         const rowData = [
             codigo,
@@ -537,19 +507,20 @@ formInstal.addEventListener('submit', async e => {
             instalador,
             obs,
             'em_operacao',
-            ''
+            null
         ];
 
         // Salvar no Google Sheets
         const result = await saveToGoogleSheets('Tecidos', rowData);
         
         if (result.success) {
-            // Recarregar dados da planilha para atualizar a interface
-            await carregarDadosDaPlanilha();
-            carregarTabelas();
+            // Salvar no cache local
+            fabrics.push(novoTecido);
+            write(KEY_FABRICS, fabrics);
             
             formInstal.reset(); 
             inst_data.valueAsDate = new Date(); 
+            carregarTabelas(); 
             showStatus('Instalação registrada com sucesso!', 'success');
         } else {
             showStatus(`Erro ao salvar: ${result.message}`, 'error');
@@ -558,6 +529,7 @@ formInstal.addEventListener('submit', async e => {
         console.error('Erro ao salvar instalação:', error);
         showStatus(`Erro ao salvar instalação: ${error.message}`, 'error');
     } finally {
+        // Ocultar loading
         loadingInstalacao.style.display = 'none';
         btnSalvarInstalacao.disabled = false;
     }
@@ -572,7 +544,7 @@ insp_codigo.addEventListener('change', () => {
         insp_total_anomalias.value = '';
         return; 
     }
-    let f = readCache(KEY_FABRICS_CACHE).find(x => x.codigo === codigo);
+    let f = read(KEY_FABRICS).find(x => x.codigo === codigo);
     if (f) { 
         insp_filtro.value = f.filtro; 
         insp_placa.value = f.placa; 
@@ -597,10 +569,25 @@ formInsp.addEventListener('submit', async e => {
     if (!codigo) return alert('Selecione o tecido ativo.');
     if (!condicao) return alert('Selecione o tipo de anomalia.');
     
+    // Mostrar loading
     loadingAnomalia.style.display = 'inline-block';
     btnRegistrarAnomalia.disabled = true;
     
     try {
+        let fabrics = read(KEY_FABRICS);
+        let f = fabrics.find(x => x.codigo === codigo);
+        if (!f) return alert('Tecido não encontrado.');
+
+        // Registrar nova anomalia
+        const novaAnomalia = {
+            codigo_tecido: codigo,
+            data: new Date().toISOString(),
+            quadrante: insp_quadrante.value,
+            condicao,
+            responsavel: insp_responsavel.value.trim(),
+            observacoes: insp_obs.value.trim()
+        };
+
         // Preparar dados para o Google Sheets
         const rowData = [
             codigo,
@@ -615,15 +602,17 @@ formInsp.addEventListener('submit', async e => {
         const result = await saveToGoogleSheets('Anomalias', rowData);
         
         if (result.success) {
-            // Recarregar dados da planilha para atualizar a interface
-            await carregarDadosDaPlanilha();
-            carregarTabelas();
+            // Salvar no cache local
+            if (!f.anomalias) f.anomalias = [];
+            f.anomalias.push(novaAnomalia);
+            write(KEY_FABRICS, fabrics);
             
             formInsp.reset();
             insp_filtro.value = '';
             insp_placa.value = '';
             insp_lado.value = '';
             insp_total_anomalias.value = '';
+            carregarTabelas();
             showStatus('Anomalia registrada com sucesso!', 'success');
         } else {
             showStatus(`Erro ao salvar: ${result.message}`, 'error');
@@ -632,28 +621,59 @@ formInsp.addEventListener('submit', async e => {
         console.error('Erro ao registrar anomalia:', error);
         showStatus(`Erro ao registrar anomalia: ${error.message}`, 'error');
     } finally {
+        // Ocultar loading
         loadingAnomalia.style.display = 'none';
         btnRegistrarAnomalia.disabled = false;
     }
 });
 
-btnAtualizarDados.addEventListener('click', async () => {
-    await carregarDadosDaPlanilha();
+// EXPORT CSV
+btnExportFabrics.addEventListener('click', () => { 
+    let arr = read(KEY_FABRICS).slice().sort((a, b) => new Date(b.instalado_em) - new Date(a.instalado_em)); 
+    if (!arr.length) return alert('Sem tecidos para exportar.'); 
+    download(toCSV(arr), 'tecidos_v3.csv'); 
+});
+
+btnExportInsps.addEventListener('click', () => {
+    let fabrics = read(KEY_FABRICS);
+    let todasAnomalias = [];
+    
+    fabrics.forEach(f => { 
+        if (f.anomalias) {
+            f.anomalias.forEach(a => { 
+                todasAnomalias.push({
+                    codigo_tecido: f.codigo,
+                    filtro: f.filtro,
+                    placa: f.placa,
+                    lado: f.lado,
+                    data_anomalia: a.data,
+                    quadrante: a.quadrante,
+                    tipo_anomalia: a.condicao,
+                    responsavel: a.responsavel,
+                    observacoes: a.observacoes,
+                    status_tecido: f.status
+                }); 
+            });
+        }
+    });
+    
+    if (!todasAnomalias.length) return alert('Nenhuma anomalia registrada para exportar.');
+    download(toCSV(todasAnomalias), 'anomalias_tecidos_detalhadas.csv');
+});
+
+btnAtualizarDados.addEventListener('click', () => {
     carregarTabelas();
+    showStatus('Dados atualizados do cache local.', 'info');
 });
 
 // INIT
-async function init() {
+function init() {
     preencherPlacas(inst_placa, inst_filtro.value, true);
     preencherPlacas(placaBusca, filtroBusca.value, true);
-    
-    // Carregar dados da planilha
-    await carregarDadosDaPlanilha();
     carregarTabelas();
-    
     inst_data.valueAsDate = new Date();
     
-    showStatus('Sistema carregado. Os dados são buscados diretamente do Google Sheets.', 'info');
+    showStatus('Sistema carregado. Use o botão "Atualizar Dados" para sincronizar.', 'info');
 }
 
 // Inicializar a aplicação
