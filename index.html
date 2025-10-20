@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Inspeção de Tecidos</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: Arial, sans-serif; background: #f5f7f9; padding: 20px; }
+        .container { max-width: 100%; margin: 0 auto; }
+        .card { background: white; padding: 15px; border-radius: 10px; margin-bottom: 15px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #1b6b6b; margin-bottom: 20px; }
+        h3 { margin-bottom: 15px; color: #333; }
+        form { display: block; }
+        label { display: block; font-weight: bold; margin-top: 10px; }
+        input, select, textarea, button { width: 100%; padding: 10px; margin-top: 5px; border: 1px solid #ddd; border-radius: 5px; }
+        .row { display: flex; gap: 10px; margin-bottom: 10px; }
+        .row > * { flex: 1; }
+        button { background: #1b6b6b; color: white; border: none; padding: 12px; cursor: pointer; }
+        button:disabled { background: #ccc; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 5px; text-align: center; }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { padding: 8px; border: 1px solid #ddd; text-align: left; }
+        th { background: #f1f6f6; }
+        .loading { display: inline-block; width: 20px; height: 20px; border: 2px solid #f3f3f3; border-top: 2px solid #1b6b6b; border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Inspeção de Tecidos<br><small>Sistema na Nuvem</small></h1>
+        
+        <div id="statusMessage" class="status" style="display: none;"></div>
+
+        <div class="card">
+            <h3>📋 Instalar Tecido</h3>
+            <form id="formInstal">
+                <label>Código do Tecido</label>
+                <div class="row">
+                    <input type="text" id="inst_codigo" placeholder="T0000001" required>
+                    <button type="button" id="btnGerar">Gerar</button>
+                </div>
+                
+                <div class="row">
+                    <select id="inst_filtro" required>
+                        <option value="">Filtro</option>
+                        <option value="1">Filtro 1</option>
+                        <option value="2">Filtro 2</option>
+                        <option value="3">Filtro 3</option>
+                        <option value="4">Filtro 4</option>
+                    </select>
+                    <select id="inst_placa" required>
+                        <option value="">Placa</option>
+                    </select>
+                </div>
+                
+                <div class="row">
+                    <select id="inst_lado" required>
+                        <option value="">Lado</option>
+                        <option value="A">A</option>
+                        <option value="B">B</option>
+                    </select>
+                    <input type="date" id="inst_data" required>
+                </div>
+                
+                <label>Responsável</label>
+                <input type="text" id="inst_responsavel" required>
+                
+                <label>Observações</label>
+                <textarea id="inst_obs" rows="2"></textarea>
+                
+                <button type="submit" id="btnSalvarInstalacao" style="margin-top: 15px;">
+                    <span id="loadingInstalacao" class="loading" style="display: none;"></span>
+                    💾 Salvar Instalação
+                </button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3>🔍 Registrar Anomalia</h3>
+            <form id="formInsp">
+                <label>Selecione o Tecido</label>
+                <select id="insp_codigo" required>
+                    <option value="">-- Carregando tecidos --</option>
+                </select>
+                
+                <div class="row">
+                    <input type="text" id="insp_filtro" readonly placeholder="Filtro">
+                    <input type="text" id="insp_placa" readonly placeholder="Placa">
+                </div>
+                
+                <div class="row">
+                    <input type="text" id="insp_lado" readonly placeholder="Lado">
+                    <select id="insp_quadrante" required>
+                        <option value="">Quadrante</option>
+                        <option>Q1</option>
+                        <option>Q2</option>
+                        <option>Q3</option>
+                        <option>Q4</option>
+                    </select>
+                </div>
+                
+                <label>Tipo de Anomalia</label>
+                <select id="insp_condicao" required>
+                    <option value="">Selecione...</option>
+                    <option>Desgaste</option>
+                    <option>Furo</option>
+                    <option>Rasgo</option>
+                    <option>Obstrução</option>
+                </select>
+                
+                <label>Responsável</label>
+                <input type="text" id="insp_responsavel" required>
+                
+                <label>Descrição</label>
+                <textarea id="insp_obs" rows="2" placeholder="Descreva a anomalia..."></textarea>
+                
+                <button type="submit" id="btnRegistrarAnomalia" style="margin-top: 15px;">
+                    <span id="loadingAnomalia" class="loading" style="display: none;"></span>
+                    📝 Registrar Anomalia
+                </button>
+            </form>
+        </div>
+
+        <div class="card">
+            <h3>📊 Tecidos Cadastrados</h3>
+            <button type="button" id="btnAtualizar" style="margin-bottom: 10px;">🔄 Atualizar Lista</button>
+            <div id="listaTecidos">
+                <p>Carregando tecidos...</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Configuração - será atualizada após deploy
+        const API_BASE_URL = 'https://inspecao-tecidos-production.up.railway.app/api';
+        
+        // Elementos DOM
+        const statusMessage = document.getElementById('statusMessage');
+        const formInstal = document.getElementById('formInstal');
+        const formInsp = document.getElementById('formInsp');
+        const btnGerar = document.getElementById('btnGerar');
+        const btnAtualizar = document.getElementById('btnAtualizar');
+        
+        // Funções utilitárias
+        function showStatus(message, type = 'success') {
+            statusMessage.textContent = message;
+            statusMessage.className = `status ${type}`;
+            statusMessage.style.display = 'block';
+            setTimeout(() => {
+                statusMessage.style.display = 'none';
+            }, 5000);
+        }
+        
+        // Configurar placas por filtro
+        const placasPorFiltro = { '1': 31, '2': 111, '3': 111, '4': 111 };
+        
+        document.getElementById('inst_filtro').addEventListener('change', function() {
+            const filtro = this.value;
+            const selectPlaca = document.getElementById('inst_placa');
+            selectPlaca.innerHTML = '<option value="">Placa</option>';
+            
+            if (filtro && placasPorFiltro[filtro]) {
+                for (let i = 1; i <= placasPorFiltro[filtro]; i++) {
+                    const option = document.createElement('option');
+                    option.value = i;
+                    option.textContent = i;
+                    selectPlaca.appendChild(option);
+                }
+            }
+        });
+        
+        // Gerar código automático
+        btnGerar.addEventListener('click', function() {
+            document.getElementById('inst_codigo').value = 'T' + Date.now().toString().slice(-7);
+        });
+        
+        // Data atual como padrão
+        document.getElementById('inst_data').valueAsDate = new Date();
+        
+        // Carregar tecidos para seleção
+        async function carregarTecidos() {
+            try {
+                const response = await fetch(`${API_BASE_URL}/tecidos`);
+                const tecidos = await response.json();
+                
+                const select = document.getElementById('insp_codigo');
+                select.innerHTML = '<option value="">Selecione o tecido</option>';
+                
+                tecidos.filter(t => t.status === 'em_operacao').forEach(tecido => {
+                    const option = document.createElement('option');
+                    option.value = tecido.codigo;
+                    option.textContent = `${tecido.codigo} - F${tecido.filtro}P${tecido.placa}L${tecido.lado}`;
+                    option.dataset.tecido = JSON.stringify(tecido);
+                    select.appendChild(option);
+                });
+                
+                atualizarListaTecidos(tecidos);
+            } catch (error) {
+                console.error('Erro ao carregar tecidos:', error);
+                showStatus('Erro ao carregar tecidos', 'error');
+            }
+        }
+        
+        // Atualizar lista na interface
+        function atualizarListaTecidos(tecidos) {
+            const lista = document.getElementById('listaTecidos');
+            if (tecidos.length === 0) {
+                lista.innerHTML = '<p>Nenhum tecido cadastrado</p>';
+                return;
+            }
+            
+            let html = '<table><tr><th>Código</th><th>Filtro</th><th>Placa</th><th>Lado</th><th>Status</th></tr>';
+            tecidos.forEach(tecido => {
+                html += `<tr>
+                    <td>${tecido.codigo}</td>
+                    <td>${tecido.filtro}</td>
+                    <td>${tecido.placa}</td>
+                    <td>${tecido.lado}</td>
+                    <td>${tecido.status === 'em_operacao' ? '✅ Operação' : '🔄 Substituído'}</td>
+                </tr>`;
+            });
+            html += '</table>';
+            lista.innerHTML = html;
+        }
+        
+        // Formulário de instalação
+        formInstal.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const btn = document.getElementById('btnSalvarInstalacao');
+            const loading = document.getElementById('loadingInstalacao');
+            
+            btn.disabled = true;
+            loading.style.display = 'inline-block';
+            
+            try {
+                const formData = {
+                    codigo: document.getElementById('inst_codigo').value,
+                    filtro: parseInt(document.getElementById('inst_filtro').value),
+                    placa: parseInt(document.getElementById('inst_placa').value),
+                    lado: document.getElementById('inst_lado').value,
+                    instalado_em: new Date(document.getElementById('inst_data').value).toISOString(),
+                    instalador: document.getElementById('inst_responsavel').value,
+                    observacoes: document.getElementById('inst_obs').value
+                };
+                
+                const response = await fetch(`${API_BASE_URL}/tecidos`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showStatus('Tecido instalado com sucesso!');
+                    formInstal.reset();
+                    document.getElementById('inst_data').valueAsDate = new Date();
+                    await carregarTecidos();
+                } else {
+                    showStatus('Erro: ' + (result.error || 'Falha ao salvar'), 'error');
+                }
+            } catch (error) {
+                showStatus('Erro de conexão: ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
+                loading.style.display = 'none';
+            }
+        });
+        
+        // Formulário de anomalia
+        formInsp.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const btn = document.getElementById('btnRegistrarAnomalia');
+            const loading = document.getElementById('loadingAnomalia');
+            
+            btn.disabled = true;
+            loading.style.display = 'inline-block';
+            
+            try {
+                const formData = {
+                    tecido_codigo: document.getElementById('insp_codigo').value,
+                    data: new Date().toISOString(),
+                    quadrante: document.getElementById('insp_quadrante').value,
+                    condicao: document.getElementById('insp_condicao').value,
+                    responsavel: document.getElementById('insp_responsavel').value,
+                    observacoes: document.getElementById('insp_obs').value
+                };
+                
+                const response = await fetch(`${API_BASE_URL}/anomalias`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(formData)
+                });
+                
+                const result = await response.json();
+                
+                if (result.success) {
+                    showStatus('Anomalia registrada com sucesso!');
+                    formInsp.reset();
+                } else {
+                    showStatus('Erro: ' + (result.error || 'Falha ao salvar'), 'error');
+                }
+            } catch (error) {
+                showStatus('Erro de conexão: ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
+                loading.style.display = 'none';
+            }
+        });
+        
+        // Atualizar dados do tecido selecionado
+        document.getElementById('insp_codigo').addEventListener('change', function() {
+            const selectedOption = this.options[this.selectedIndex];
+            if (selectedOption.dataset.tecido) {
+                const tecido = JSON.parse(selectedOption.dataset.tecido);
+                document.getElementById('insp_filtro').value = tecido.filtro;
+                document.getElementById('insp_placa').value = tecido.placa;
+                document.getElementById('insp_lado').value = tecido.lado;
+            }
+        });
+        
+        // Botão atualizar
+        btnAtualizar.addEventListener('click', carregarTecidos);
+        
+        // Inicializar
+        document.addEventListener('DOMContentLoaded', function() {
+            showStatus('Sistema carregado! Conectando ao servidor...', 'success');
+            carregarTecidos();
+        });
+    </script>
+</body>
+</html>
